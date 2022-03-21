@@ -1,0 +1,9 @@
+ITEM: TIMESTEP
+0
+ITEM: NUMBER OF ATOMS
+0
+ITEM: BOX BOUNDS pp pp pp 
+0.0 696.344000
+0.0 696.344000
+0.0 696.344000
+ITEM: ATOMS id x y z tbx tby tbz sbx sby sbz loop
