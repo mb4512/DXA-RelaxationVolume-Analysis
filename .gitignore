@@ -1,0 +1,5 @@
+*.out
+*.unfolded
+*.dat
+*.line
+*.dump.gz

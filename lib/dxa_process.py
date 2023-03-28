@@ -253,27 +253,34 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
         nebs1 = nebs1[dis1<np.inf]
         nebs2 = nebs2[dis2<np.inf]
         
-        # if no junction is found, check for the next closest link
+        # if no junction is found, check instead for the next closest link
         if nebs1.size + nebs2.size == 0:
             dis1,nebs1 = ktree1.query(endsw2[i], distance_upper_bound=dmax, k=1)
             dis2,nebs2 = ktree2.query(endsw2[i], distance_upper_bound=dmax, k=2)    
-
+            
             dis2  =  dis2[1] # remove self interaction
             nebs2 = nebs2[1]
-            
+           
             if dis1 < dis2:
                 nebs2 = np.r_[[]]
                 nebs1 = np.r_[nebs1]
             else:
                 nebs1 = np.r_[[]]
                 nebs2 = np.r_[nebs2]
-            
+
+
             # overwrite segment end
             if nebs1.size>0:
+                #if i == nebs1[0]:
+                #    raise ValueError("no nearest link found within cutoff radius %d." % dmax)
+
                 print ('joining end   %3d at' % i, endsw2[i], 'to start %3d at' % nebs1[0], endsw1[nebs1][0])
                 rfile.xyz[i] = np.r_[rfile.xyz[i], [rfile.xyz[nebs1[0]][0]]]
                 endsw2[i] = endsw1[nebs1][0]
             else:
+                #if i == nebs2[0]:
+                #    raise ValueError("no nearest link found within cutoff radius %d." % dmax)
+
                 print ('joining end   %3d at' % i, endsw2[i], 'to end   %3d at' % nebs2[0], endsw2[nebs2][0])
                 rfile.xyz[i] = np.r_[rfile.xyz[i], [rfile.xyz[nebs2[0]][-1]]]
                 endsw2[i] = endsw2[nebs2][0]
@@ -288,11 +295,13 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
             de22[i,nebs2] = 1
     
     if terminating:
+        successflag = False
         print ("WARNING: %d segments are still unconnected!" % terminating)
     else:
         print ("All segments connected.")
+        successflag = True
 
-    return de11, de12, de21, de22, endsw1, endsw2
+    return de11, de12, de21, de22, endsw1, endsw2, successflag
 
 
 def consistency_check (de11, de12, de21, de22):

@@ -270,29 +270,35 @@ def kirchhoff_check(graph):
     print ("Checking if Kirchhoff's law is violated.")
     viol=False
     for node in graph.nodes:
-            e0 = list(graph.in_edges(node))
-            e1 = list(graph.out_edges(node))
+        e0 = list(graph.in_edges(node))
+        e1 = list(graph.out_edges(node))
+        
+        #print ("node:", node) 
+        bnet = np.r_[0.,0.,0.]
+        done = []
+        for _e in e0:
+            if _e not in done:
+                _edat = graph.get_edge_data(*_e)
+                for _key in _edat:
+                    #print ("\tin:", _edat[_key]['burgers'])
+                    bnet += _edat[_key]['burgers']
+            done += [_e]
             
-            bnet = np.r_[0.,0.,0.]
-            done = []
-            for _e in e0:
-                if _e not in done:
-                    _edat = graph.get_edge_data(*_e)
-                    for _key in _edat:
-                        bnet += _edat[_key]['burgers']
-                done += [_e]
-                
-            done = []
-            for _e in e1:
-                if _e not in done:            
-                    _edat = graph.get_edge_data(*_e)
-                    for _key in _edat:
-                        bnet -= _edat[_key]['burgers']
-                done += [_e]
-            
-            if (np.abs(bnet)>1e-6).any():
-                print ('node %3d net burgers:' % node, bnet)
-                viol=True
+        done = []
+        for _e in e1:
+            if _e not in done:            
+                _edat = graph.get_edge_data(*_e)
+                for _key in _edat:
+                    #print ("\tout:", -_edat[_key]['burgers'])
+                    bnet -= _edat[_key]['burgers']
+            done += [_e]
+        
+        if (np.abs(bnet)>1e-6).any():
+            #print ([graph.get_edge_data(*_e0) for _e0 in e0])
+            #print ([graph.get_edge_data(*_e1) for _e1 in e1])
+            print ('node %3d, net burgers:' % node, bnet)
+            viol=True
+
     if viol:
         print ("Kirchhoff's law is violated. The network has inconsistent nodes.\n") 
         return 1
@@ -413,6 +419,40 @@ if 0:
 
         return omegatot/omega0, omegalist/omega0
 
+def linelength(sgraph, verbose=1):
+    '''Compute the dislocation line lengths of all segments and classify by Burgers vector norm.'''
+
+    perimeterdict = {}
+    perimetertot = {}
+    for _i,_subgraph in enumerate(sgraph):
+        perimeter = 0
+
+        for edge in _subgraph.edges(data=True):
+            _bnorm = np.linalg.norm(edge[2]['burgers'])
+            _r = edge[2]['seg']
+            perimeter += np.sum([np.linalg.norm(_r[_j+1]-_r[_j]) for _j in range(len(_r)-1)]) 
+
+        if _bnorm not in perimeterdict:
+            perimeterdict[_bnorm] = []
+        perimeterdict[_bnorm] += [perimeter]
+
+        if verbose:
+            print ('Perimeter length of subgraph %4d: %14.8f Angstrom' % (_i, perimeter))
+    
+    for _key in perimeterdict:   
+        perimeterdict[_key] = np.r_[perimeterdict[_key]]
+        perimetertot[_key] = np.sum(perimeterdict[_key])
+
+    perimeterall = 0.0
+    for _key in perimetertot:
+        perimeterall += perimetertot[_key] 
+
+    if verbose:
+        print ('Total perimeter length: %14.8f Angstrom' % (perimeterall))
+
+    return perimeterall, perimetertot, perimeterdict
+
+
 
 def relaxationvolume(sgraph, alattice, omega0, offset=[0,0,0], verbose=1):
     '''Compute the relaxation volume of all closed networks.'''
@@ -516,15 +556,24 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
         for _d in dangling_nodes:
             _diff = _d[1][1]-_d[1][0]
             _cvec = np.sum(np.sign(_diff)*cmatrix[np.abs(_diff)>1.0], axis=0)
-            if _cvec[0] < 0:
-                _cvec *= -1
+
+            # convention
+            for _q in range(3):
+                if _cvec[_q] < 0:
+                    _cvec *= -1
+
+            # avoid -0.0...
+            _cvec[np.abs(_cvec) < 1e-6] = 0.0
             cvecs += [_cvec]
  
     if 0:
         for _d in dangling_nodes:
-            _diff = np.abs(_d[1][1]-_d[1][0])
-            cvecs += [np.sum(cmatrix[np.abs(_diff)>1.0], axis=0)]
-     
+            _diff = _d[1][1]-_d[1][0]
+            _cvec = np.sum(np.sign(_diff)*cmatrix[np.abs(_diff)>1.0], axis=0)
+            if _cvec[0] < 0:
+                _cvec *= -1
+            cvecs += [_cvec]
+    
     for _i in range(len(cvecs)): 
         _pos1 =  dangling_nodes[_i][1][0]
         _pos2 =  dangling_nodes[_i][1][1]

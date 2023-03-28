@@ -20,7 +20,9 @@ def main():
 
     # connect terminating segments
     for i in range(3):
-        de11,de12,de21,de22,endsw1,endsw2 = link_network(rfile)
+        de11,de12,de21,de22,endsw1,endsw2,successflag = link_network(rfile, dmax=15.0)
+        if successflag is True:
+            break
 
     if consistency_check (de11, de12, de21, de22) == 1:
         return 1
@@ -58,6 +60,22 @@ def main():
     # unwrap segments
     sgraph = [nx.MultiDiGraph(deepcopy(graph.subgraph(c))) for c in nx.weakly_connected_components(graph)]
     sshifted = relink_graph(sgraph)
+
+    if 0==1:
+        # compute dislocation line lengths
+        perimeterall, perimetertot, perimeterdict = linelength(sgraph, verbose=1)
+        # save length output
+        fending = fpath.split('.')[-1]
+        fname = fpath.rstrip('.'+fending)
+        
+        exportlines = []
+        for _key in perimeterdict:
+            for _line in perimeterdict[_key]:
+                exportlines += [[_key, _line]]
+        exportlines = np.insert(exportlines, 0, np.r_[0.0, perimeterall], axis=0)
+        np.savetxt('%s.line' % fname, exportlines, fmt="%10.4f %16.8f")
+
+        return 0
 
     # relaxation volume of complete dislocation network
     alattice = 3.16
