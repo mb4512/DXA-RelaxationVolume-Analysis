@@ -16,7 +16,7 @@ def make_graph(rfile, edge_dict, endsw1, endsw2):
 
 def export_graph(g, path="graph.log"):
     A = nx.adjacency_matrix(g)
-    Amat = np.array(A.todense(), dtype=np.int)
+    Amat = np.array(A.todense(), dtype=int)
     print ("Exporting graph connectivity matrix to %s\n" % path)
     np.savetxt(path, Amat, fmt='%1d')
 

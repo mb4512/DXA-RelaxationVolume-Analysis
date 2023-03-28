@@ -5,10 +5,10 @@ from scipy import spatial
 class Node:
     '''Container for dislocation node data.'''
     def __init__(self):
-        self.edges = np.array([], dtype=np.int)
-        self.signs = np.array([], dtype=np.int)
-        self.bvecs = np.array([[]], dtype=np.float)
-        self.sgxyz = np.array([], dtype=np.int)
+        self.edges = np.array([], dtype=int)
+        self.signs = np.array([], dtype=int)
+        self.bvecs = np.array([[]], dtype=float)
+        self.sgxyz = np.array([], dtype=int)
         
     def net(self):
         return np.dot(self.bvecs.T, self.signs)

@@ -47,24 +47,24 @@ class ReadFile:
             xlo,xhi = _dfile.readline().split()
             ylo,yhi = _dfile.readline().split()
             zlo,zhi = _dfile.readline().split()
-            _cell = np.array([[xlo,xhi], [ylo,yhi], [zlo,zhi]], dtype=np.float)
+            _cell = np.array([[xlo,xhi], [ylo,yhi], [zlo,zhi]], dtype=float)
             
             _dfile.readline()
 
             # read in atomic coordinates
             _rawdata = [_dfile.readline().rstrip("\n").split() for i in range(natoms)]
-            _rawdata = np.array(_rawdata, dtype=np.float)
+            _rawdata = np.array(_rawdata, dtype=float)
             
             self.cell = _cell
-            self.id = np.array(_rawdata[:,0], dtype=np.int)
+            self.id = np.array(_rawdata[:,0], dtype=int)
         
             if dxa:
-                self.xyz      = np.array(_rawdata[:,1:4], dtype=np.float)
-                self.btrue    = np.array(_rawdata[:,4:7], dtype=np.float)
-                self.bspatial = np.array(_rawdata[:,7:10], dtype=np.float)
-                self.isloop   = np.array(_rawdata[:,-1], dtype=np.int)
+                self.xyz      = np.array(_rawdata[:,1:4], dtype=float)
+                self.btrue    = np.array(_rawdata[:,4:7], dtype=float)
+                self.bspatial = np.array(_rawdata[:,7:10], dtype=float)
+                self.isloop   = np.array(_rawdata[:,-1], dtype=int)
             else:
-                self.xyz      = np.array(_rawdata[:,2:5], dtype=np.float)
+                self.xyz      = np.array(_rawdata[:,2:5], dtype=float)
         return 0
 
 
@@ -84,7 +84,7 @@ class ReadDump:
         print ("File %s has %d rows." % (fname, linecount))
 
         # pre-allocate array and load data into array
-        dumpdata = np.zeros((linecount-9, 5), dtype=np.float64)
+        dumpdata = np.zeros((linecount-9, 5), dtype=float)
 
         with open(fname) as fread:
             # read in number of atoms
@@ -98,7 +98,7 @@ class ReadDump:
             xlo,xhi = fread.readline().split()
             ylo,yhi = fread.readline().split()
             zlo,zhi = fread.readline().split()
-            _cell = np.array([[xlo,xhi], [ylo,yhi], [zlo,zhi]], dtype=np.float)
+            _cell = np.array([[xlo,xhi], [ylo,yhi], [zlo,zhi]], dtype=float)
             fread.readline()
            
             print ('Importing file %s with %d atoms...' % (fname, natoms))
