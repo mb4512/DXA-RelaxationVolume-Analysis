@@ -90,7 +90,7 @@ def nodes_register(rfile, de11, de12, de21, de22):
         strkey = np.sort(['%s%s' % (pm(j),i) for i,j in zip(node.edges,node.signs)])
         strkey = 'x'.join(strkey)
         indices_sorted.append(strkey)
-        
+    
     _,indices_unique = np.unique(indices_sorted, return_index=True)
     nodes_register = [nodes_register[_v] for _v in indices_unique]
 
@@ -182,11 +182,11 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
     # for segments that terminate, find neighboring segments to connect them to
     nseg = rfile.nsegments
     
-    de11 = np.zeros((nseg, nseg))
-    de22 = np.zeros((nseg, nseg))
+    de11 = np.zeros((nseg, nseg), dtype=int)
+    de22 = np.zeros((nseg, nseg), dtype=int)
     
-    de12 = np.zeros((nseg, nseg))
-    de21 = np.zeros((nseg, nseg))
+    de12 = np.zeros((nseg, nseg), dtype=int)
+    de21 = np.zeros((nseg, nseg), dtype=int)
     
     ktree1 = spatial.cKDTree(endsw1, boxsize=rfile.cell)
     ktree2 = spatial.cKDTree(endsw2, boxsize=rfile.cell)
@@ -268,19 +268,12 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
                 nebs1 = np.r_[[]]
                 nebs2 = np.r_[nebs2]
 
-
             # overwrite segment end
             if nebs1.size>0:
-                #if i == nebs1[0]:
-                #    raise ValueError("no nearest link found within cutoff radius %d." % dmax)
-
                 print ('joining end   %3d at' % i, endsw2[i], 'to start %3d at' % nebs1[0], endsw1[nebs1][0])
                 rfile.xyz[i] = np.r_[rfile.xyz[i], [rfile.xyz[nebs1[0]][0]]]
                 endsw2[i] = endsw1[nebs1][0]
             else:
-                #if i == nebs2[0]:
-                #    raise ValueError("no nearest link found within cutoff radius %d." % dmax)
-
                 print ('joining end   %3d at' % i, endsw2[i], 'to end   %3d at' % nebs2[0], endsw2[nebs2][0])
                 rfile.xyz[i] = np.r_[rfile.xyz[i], [rfile.xyz[nebs2[0]][-1]]]
                 endsw2[i] = endsw2[nebs2][0]
@@ -295,12 +288,16 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
             de22[i,nebs2] = 1
     
     if terminating:
-        successflag = False
         print ("WARNING: %d segments are still unconnected!" % terminating)
+        successflag = False
     else:
         print ("All segments connected.")
         successflag = True
 
+    np.savetxt('de11.dat', de11, fmt="%d")
+    np.savetxt('de12.dat', de12, fmt="%d")
+    np.savetxt('de21.dat', de21, fmt="%d")
+    np.savetxt('de22.dat', de22, fmt="%d")
     return de11, de12, de21, de22, endsw1, endsw2, successflag
 
 

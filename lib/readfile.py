@@ -126,7 +126,7 @@ class ReadDump:
         print ("\nConstructing KD-tree.")
         t0 = time.time()
         self.xyz = np.r_[[_x - self.cell*np.floor(_x/self.cell) for _x in self.xyz]]
-        self.ktree = spatial.cKDTree(self.xyz, boxsize=self.cell)
+        self.ktree = spatial.KDTree(self.xyz, boxsize=self.cell)
         print ('Completed after %6.3f seconds.' % (time.time()-t0))
 
         return 0

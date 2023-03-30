@@ -20,9 +20,9 @@ def main():
 
     # connect terminating segments
     for i in range(3):
-        de11,de12,de21,de22,endsw1,endsw2,successflag = link_network(rfile, dmax=15.0)
-        if successflag is True:
-            break
+        de11,de12,de21,de22,endsw1,endsw2,successflag = link_network(rfile, dmax=15.)
+        #if successflag is True:
+        #    break
 
     if consistency_check (de11, de12, de21, de22) == 1:
         return 1
