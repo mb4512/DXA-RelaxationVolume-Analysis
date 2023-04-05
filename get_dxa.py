@@ -61,11 +61,36 @@ def main():
                 pbc += "f "
 
         # simulation box dimensions specific to orthogonal box
-        wfile.write("ITEM: BOX BOUNDS %s\n" % pbc)
-        simcell = data.cell.matrix
-        wfile.write("0.0 %f\n" % simcell[0,0])
-        wfile.write("0.0 %f\n" % simcell[1,1])
-        wfile.write("0.0 %f\n" % simcell[2,2])
+        wfile.write("ITEM: BOX BOUNDS xy xz yz %s\n" % pbc)
+        cell = data.cell.matrix
+
+        Av = cell[:,0]
+        Bv = cell[:,1]
+        Cv = cell[:,2]
+        r0 = cell[:,3]
+        A,B,C = np.linalg.norm(Av),  np.linalg.norm(Bv),  np.linalg.norm(Cv)
+
+        ax = A 
+        bx = np.dot(Bv, Av/A) 
+        by = np.sqrt(B*B - bx*bx)
+        cx = np.dot(Cv, Av/A)
+        cy = (np.dot(Bv, Cv) - bx*cx)/by
+        cz = np.sqrt(C*C - cx*cx - cy*cy)
+
+        xlo,ylo,zlo = r0 
+        xhi,yhi,zhi = xlo+ax, ylo+by, zlo+cz
+        xy,xz,yz = bx,cx,cy
+
+        xlo_bound = xlo + min(0.0,xy,xz,xy+xz)
+        xhi_bound = xhi + max(0.0,xy,xz,xy+xz)
+        ylo_bound = ylo + min(0.0,yz)
+        yhi_bound = yhi + max(0.0,yz)
+        zlo_bound = zlo
+        zhi_bound = zhi
+         
+        wfile.write("%f %f %f\n" % (xlo_bound, xhi_bound, xy)) 
+        wfile.write("%f %f %f\n" % (ylo_bound, yhi_bound, xz)) 
+        wfile.write("%f %f %f\n" % (zlo_bound, zhi_bound, yz)) 
 
         wfile.write("ITEM: ATOMS id x y z tbx tby tbz sbx sby sbz loop\n")
 

@@ -174,11 +174,11 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
     
     # wrap ends of dislocation segments back into the box
     ends1 = np.r_[[x[0] for x in rfile.xyz]]
-    endsw1 = np.r_[[_r - rfile.cell*np.floor(_r/rfile.cell) for _r in ends1]]
-    
+    endsw1 = np.r_[[rfile.pbcwrap(x) for x in ends1]]
+
     ends2 = np.r_[[x[-1] for x in rfile.xyz]]
-    endsw2 = np.r_[[_r - rfile.cell*np.floor(_r/rfile.cell) for _r in ends2]]
-    
+    endsw2 = np.r_[[rfile.pbcwrap(x) for x in ends2]]
+
     # for segments that terminate, find neighboring segments to connect them to
     nseg = rfile.nsegments
     
@@ -187,10 +187,11 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
     
     de12 = np.zeros((nseg, nseg), dtype=int)
     de21 = np.zeros((nseg, nseg), dtype=int)
-    
-    ktree1 = spatial.cKDTree(endsw1, boxsize=rfile.cell)
-    ktree2 = spatial.cKDTree(endsw2, boxsize=rfile.cell)
-    
+   
+    # construct kdtrees for neighbour search in the general triclinic system
+    ids1,xyz1,ktree1 = rfile.build_triclinic_kdtree(endsw1)
+    ids2,xyz2,ktree2 = rfile.build_triclinic_kdtree(endsw2)
+
     terminating = 0
     for i in range(len(endsw1)):    
         nnebs = 0
@@ -202,24 +203,24 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
         dis1  =  dis1[nebs1 != i]  # remove self interaction
         nebs1 = nebs1[nebs1 != i]
 
-        nebs1 = nebs1[dis1<np.inf]
-        nebs2 = nebs2[dis2<np.inf]
+        nebs1 = ids1[nebs1[dis1<np.inf]] # wrap indices back to original cell
+        nebs2 = ids2[nebs2[dis2<np.inf]]
 
-        # if no node is found, the segment terminates. look for the closest segment end
+        # if no node is found, the segment terminates. instead look for the closest segment end
         if nebs1.size + nebs2.size == 0:
             
-            dis1,nebs1 = ktree1.query(endsw1[i], distance_upper_bound=dmax, k=2)
-            dis2,nebs2 = ktree2.query(endsw1[i], distance_upper_bound=dmax, k=1)
-            
+            dis1, nebs1 = ktree1.query(endsw1[i], distance_upper_bound=dmax, k=2)
+            dis2, nebs2 = ktree2.query(endsw1[i], distance_upper_bound=dmax, k=1)
+
             dis1  = dis1[1] # remove self interaction
             nebs1 = nebs1[1]
 
             if dis1 < dis2:
                 nebs2 = np.r_[[]]
-                nebs1 = np.r_[nebs1]
+                nebs1 = np.r_[ids1[nebs1]]
             else:
                 nebs1 = np.r_[[]]
-                nebs2 = np.r_[nebs2]
+                nebs2 = np.r_[ids2[nebs2]]
 
             # overwrite segment ends
             if nebs1.size>0:
@@ -230,7 +231,11 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
                 print ('joining start %3d at' % i, endsw1[i], 'to end   %3d at' % nebs2[0], endsw2[nebs2][0])
                 rfile.xyz[i] = np.r_[[rfile.xyz[nebs2[0]][-1]], rfile.xyz[i]]
                 endsw1[i] = endsw2[nebs2][0]
-                                
+
+            # update KD trees with new end points
+            ids1,xyz1,ktree1 = rfile.build_triclinic_kdtree(endsw1)
+            ids2,xyz2,ktree2 = rfile.build_triclinic_kdtree(endsw2)
+                               
         if nebs1.size+nebs2.size == 0:
             print ("WARNING, no neighbour found for start-point of segment %d" % i)
             terminating += 1
@@ -246,27 +251,27 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
         # first, check for junctions
         dis1,nebs1 = ktree1.query(endsw2[i], distance_upper_bound=djoin, k=8)
         dis2,nebs2 = ktree2.query(endsw2[i], distance_upper_bound=djoin, k=8)
-        
+ 
         dis2  =  dis2[nebs2 != i]  # remove self interaction
         nebs2 = nebs2[nebs2 != i]
-            
-        nebs1 = nebs1[dis1<np.inf]
-        nebs2 = nebs2[dis2<np.inf]
-        
+
+        nebs1 = ids1[nebs1[dis1<np.inf]]
+        nebs2 = ids2[nebs2[dis2<np.inf]]
+
         # if no junction is found, check instead for the next closest link
         if nebs1.size + nebs2.size == 0:
             dis1,nebs1 = ktree1.query(endsw2[i], distance_upper_bound=dmax, k=1)
             dis2,nebs2 = ktree2.query(endsw2[i], distance_upper_bound=dmax, k=2)    
-            
+
             dis2  =  dis2[1] # remove self interaction
             nebs2 = nebs2[1]
-           
+
             if dis1 < dis2:
                 nebs2 = np.r_[[]]
-                nebs1 = np.r_[nebs1]
+                nebs1 = np.r_[ids1[nebs1]]
             else:
                 nebs1 = np.r_[[]]
-                nebs2 = np.r_[nebs2]
+                nebs2 = np.r_[ids2[nebs2]]
 
             # overwrite segment end
             if nebs1.size>0:
@@ -277,6 +282,10 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
                 print ('joining end   %3d at' % i, endsw2[i], 'to end   %3d at' % nebs2[0], endsw2[nebs2][0])
                 rfile.xyz[i] = np.r_[rfile.xyz[i], [rfile.xyz[nebs2[0]][-1]]]
                 endsw2[i] = endsw2[nebs2][0]
+
+            # update KD trees with new end points
+            ids1,xyz1,ktree1 = rfile.build_triclinic_kdtree(endsw1)
+            ids2,xyz2,ktree2 = rfile.build_triclinic_kdtree(endsw2)
 
         if nebs1.size+nebs2.size == 0:
             print ("WARNING, no neighbour found for end-point of segment %d" % i)

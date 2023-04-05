@@ -4,7 +4,6 @@ import sys, glob
 from lib.readfile import *
 from lib.dxa_process import *
 from lib.graphstuff import *
-from lib.get_character import *
 
 def main():
 
@@ -15,15 +14,16 @@ def main():
         dpath = None
 
     # import dxa data file    
-    rfile = ReadFile(fpath)
-    rfile.load()
+    rfile = ReadDump(fpath)
+    rfile.load(dxa=True)
+
 
     # connect terminating segments
     for i in range(3):
         de11,de12,de21,de22,endsw1,endsw2,successflag = link_network(rfile, dmax=15.)
         #if successflag is True:
         #    break
-
+   
     if consistency_check (de11, de12, de21, de22) == 1:
         return 1
 
@@ -41,14 +41,6 @@ def main():
     
     ''' 
     export_graph(graph, path="graph.log")
-
-    # smoothen dislocation nodes with degree 2 and create a list of all subgraphs in the network
-    gsmooth = flipGraph(graph, rfile)
-
-    if gsmooth == 1:
-        print ("Failed to smoothen graph.")
-        return 1
-    export_graph(gsmooth, path="graph_smooth.log")
     '''
 
     if kirchhoff_check(graph) == 1:
@@ -169,9 +161,9 @@ def main():
 
     # assume box is orthogonal and 3D pbc
     wfile.write("ITEM: BOX BOUNDS pp pp pp\n")
-    wfile.write("%f %f\n" % (rfile.cell0[0], rfile.cell[0]))
-    wfile.write("%f %f\n" % (rfile.cell0[1], rfile.cell[1]))
-    wfile.write("%f %f\n" % (rfile.cell0[2], rfile.cell[2]))
+    wfile.write("%f "*len(rfile.celldim[0]) % tuple(rfile.celldim[0]) + "\n")
+    wfile.write("%f "*len(rfile.celldim[1]) % tuple(rfile.celldim[1]) + "\n")
+    wfile.write("%f "*len(rfile.celldim[2]) % tuple(rfile.celldim[2]) + "\n")
 
     wfile.write("ITEM: ATOMS id type x y z tbx tby tbz tx ty tz segmentid relaxationvolume\n")
 
@@ -196,7 +188,7 @@ def main():
             _dr =  _edgedat['seg'][1:] -  _edgedat['seg'][:-1]
             _dr = np.concatenate([_dr, [np.r_[0,0,0]]])
             for _k,row in enumerate(_edgedat['seg']):
-                _r = row + rfile.cell0
+                _r = row + rfile.r0
                 wfile.write('%3d %3d %14.8f %14.8f %14.8f %6.3f %6.3f %6.3f %14.8f %14.8f %14.8f %6d %14.8f\n' % (_i, _type, 
                                                                                                                   _r[0], _r[1], _r[2], 
                                                                                                                   _tb[0], _tb[1], _tb[2], 

@@ -20,248 +20,20 @@ def export_graph(g, path="graph.log"):
     print ("Exporting graph connectivity matrix to %s\n" % path)
     np.savetxt(path, Amat, fmt='%1d')
 
-
-def pbcdist(x, y, rfile):
-    '''Compute distance between points x and y in the periodic orthogonal box stored in rfile.'''
-    _x = x - rfile.cell*np.floor(x/rfile.cell)
-    _y = y - rfile.cell*np.floor(y/rfile.cell)
-    
-    _dr = _x-_y
-    _dr = _dr - rfile.cell*np.trunc(_dr/(.5*rfile.cell))
-    return np.linalg.norm(_dr)
-
-def pbcdistr(dr, rfile):
-    '''Wrap distance vector dr in the periodic orthogonal box stored in rfile.'''
-    _dr = deepcopy(dr)
-    _dr = _dr - rfile.cell*np.floor(_dr/rfile.cell)
-    _dr = _dr - rfile.cell*np.trunc(_dr/(.5*rfile.cell))
-    return np.linalg.norm(_dr)
-
-def pbcdistvec(dr, rfile):
-    '''Wrap distance vector dr in the periodic orthogonal box stored in rfile.'''
-    _dr = deepcopy(dr)
-    _dr = _dr - rfile.cell*np.floor(_dr/rfile.cell)
-    _dr = _dr - rfile.cell*np.trunc(_dr/(.5*rfile.cell))
-    return _dr
-
-
-def flipGraph(graph, rfile):
-    ''' Smoothen the graph until all nodes of degree 2 have one incident and one outgoing edge. '''
-
-    print ("Smoothing the graph until all nodes of degree 2 have one incident and one outgoing edge.")
-    print ("Networks with inconsistent linesense may chance character to become consistent.")
-    g = deepcopy(graph)
-
-    if not g.is_directed():
-        print ('Error: graph is undirected.')
-        return g
-    
-    if min(dict(g.degree).values()) < 2:
-        print ('Error: graph contains nodes with fewer than 2 edges.')
-        return g
-    
-    # check for convergence by monitoring the number of nodes in the graph
-    nnodes0 = np.sum(list(dict(g.degree).values()))
-    
-    for _iters in range(1000): # max iterations
-        print ("Iteration number %d" % _iters)
-        g0 = g.copy() #<- simply changing g itself would cause error `dictionary changed size during iteration` 
-        inode = -1
-        for node, degree in g.degree():
-            inode += 1
-            
-            if degree==2:
-
-                e0 = list(g.in_edges(node))
-                e1 = list(g.out_edges(node))
-
-                n0 = len(e0)
-                n1 = len(e1)
-    
-                # for balanced nodes
-                if n0==1 and n1==1:
-                    edge0 = g.get_edge_data(*e0[0])[0]
-                    edge1 = g.get_edge_data(*e1[0])[0]
-
-                    # skip self-loops, they are already fine
-                    if edge0['segid'] == edge1['segid']:
-                        continue
-
-                    # check consistency with burgers vector
-                    kirchhoff = edge0['burgers'] - edge1['burgers']
-                    if np.sum(np.abs(kirchhoff)) > 1e-3:
-                        print ('Error: Inconsistent Kirchhoff rule at node %d!' % node)
-                        return 1
-
-                    a0,b0 = e0[0]
-                    a1,b1 = e1[0]
-
-                    q0 = a0 if a0!=node else b0
-                    q1 = a1 if a1!=node else b1
-
-                    # figure out in which order to attach segments by computing
-                    # the distance between their endpoints
-                    start1,end1 = edge0['ends']
-                    start2,end2 = edge1['ends']
-                    
-                    d1 = pbcdist(end1, start2, rfile)
-                    d2 = pbcdist(end2, start1, rfile)
-                    
-                    if d1 < d2:
-                        newseg  = np.r_[edge0['seg'], edge1['seg']]
-                        newends = [start1, end2]
-                        print ('+- joining at:', end1, start2)
-                    else:
-                        newseg = np.r_[edge1['seg'], edge0['seg']]
-                        newends = [start2, end1] 
-                        print ('+- joining at:', end2, start1)
-                    
-                    newids = edge0['segid'] + edge1['segid']
-                    
-                    # concatenate node
-                    g0.remove_node(node)
-                    g0.add_edge(q0, q1, burgers=edge0['burgers'], ends=newends, seg=newseg, segid=newids)
-                    
-                    _dr = newseg[1:]-newseg[:-1]
-                    _lengths = [pbcdistr(dr, rfile) for dr in _dr]
-                    if np.max(_lengths) > 10:
-                        print ('^^^ Error: broken chain! See coordinates below vvv')
-                        print ('node %d' % inode)
-                        print (newseg)
-                        print ()
-                        return 1
-
-                # two incoming edges
-                if n0==2:
-                    # flip and merge one of them
-                    edge0 = g.get_edge_data(*e0[0])[0] 
-                    edge1 = g.get_edge_data(*e0[1])
-                    if 1 in edge1:
-                        edge1 = edge1[1]
-                    else:
-                        edge1 = edge1[0]
-
-                    # check consistency with burgers vector, assuming incident edge nr.2 is flipped
-                    kirchhoff = edge0['burgers'] + edge1['burgers']
-                    if np.sum(np.abs(kirchhoff)) > 1e-3:
-                        print ('Error: Inconsistent Kirchhoff rule at node %d!' % node)
-                        return 1
-
-                    a0,b0 = e0[0]
-                    a1,b1 = e0[1]  
-
-                    q0 = a0 if a0!=node else b0
-                    q1 = a1 if a1!=node else b1
-                    
-                    # figure out in which order to attach segments by computing
-                    # the distance between their endpoints
-                    start1,end1 = edge0['ends']
-                    start2,end2 = edge1['ends']
-                    
-                    d1 = pbcdist(end1, end2, rfile)
-                    d2 = pbcdist(start1, start2, rfile)
-                    
-                    if d1 < d2:
-                        newseg  = np.r_[edge0['seg'], np.flip(edge1['seg'], axis=0)]
-                        newends = [start1, start2]
-                        print ('++ joining at:', end1, end2)
-                    else:
-                        newseg = np.r_[np.flip(edge1['seg'], axis=0), edge0['seg']]
-                        newends = [end2, end1] 
-                        print ('++ joining at:', start1, start2)
-                    
-                    newids = edge0['segid'] + edge1['segid']
-                    
-                    # concatenate node
-                    g0.remove_node(node)  
-                    g0.add_edge(q0, q1, burgers=edge0['burgers'], ends=newends, seg=newseg, segid=newids)
-
-                    _dr = newseg[1:]-newseg[:-1]
-                    _lengths = [pbcdistr(dr, rfile) for dr in _dr]
-                    if np.max(_lengths) > 10:
-                        print ('^^^ Error: broken chain! See coordinates below vvv')
-                        print (newseg)
-                        print ()
-                        return 1
-
-                # two outgoing edges
-                if n1==2:
-                    # flip and merge one of them
-                    edge0 = g.get_edge_data(*e1[0])[0]
-                    edge1 = g.get_edge_data(*e1[1])
-                    if 1 in edge1:
-                        edge1 = edge1[1]
-                    else:
-                        edge1 = edge1[0]
-
-                    # check consistency with burgers vector, assuming incident edge nr.2 is flipped
-                    kirchhoff = edge0['burgers'] + edge1['burgers']
-                    if np.sum(np.abs(kirchhoff)) > 1e-3:
-                        print ('Error: Inconsistent Kirchhoff rule at node %d!' % node)
-
-                    a0,b0 = e1[0]
-                    a1,b1 = e1[1]  
-
-                    q0 = a0 if a0!=node else b0
-                    q1 = a1 if a1!=node else b1
-
-                    # figure out in which order to attach segments by computing
-                    # the distance between their endpoints
-                    start1,end1 = edge0['ends']
-                    start2,end2 = edge1['ends']
-                    
-                    d1 = pbcdist(start1, start2, rfile)
-                    d2 = pbcdist(end1, end2, rfile)
-                    
-                    if d1 < d2:
-                        newseg  = np.r_[np.flip(edge0['seg'], axis=0), edge1['seg']]
-                        newends = [end1, end2]
-                        print ('-- joining at:', start1, start2)
-                    else:
-                        newseg = np.r_[edge1['seg'], np.flip(edge0['seg'], axis=0)]
-                        newends = [start2, start1] 
-                        print ('-- joining at:', end1, end2)
-                    
-                    newids = edge0['segid'] + edge1['segid']
-
-                    # concatenate node
-                    g0.remove_node(node)  
-                    g0.add_edge(q0, q1, burgers=edge1['burgers'], ends=newends, seg=newseg, segid=newids)
-                    
-                    _dr = newseg[1:]-newseg[:-1]
-                    _lengths = [pbcdistr(dr, rfile) for dr in _dr]
-                    if np.max(_lengths) > 10:
-                        print ('^^^ Error: broken chain! See coordinates below vvv')
-                        print (newseg)
-                        print ()
-                        return 1                        
-                else:
-                    pass
-            g = g0
-            
-        nnodes = np.sum(list(dict(g.degree).values()))
-        
-        if nnodes==nnodes0:
-            print ('Graph converged after %d iterations.' % (_iters+1))
-            break
-        nnodes0 = nnodes
-        
-    
-    if nnodes!=nnodes0:
-        print ('Graph did not converge after %d iterations.' % (_iters+1))
-        return 1
-        
-    return g
-
 def segment_continuity(graph, rfile):
     # enforce continuity of segments across PBC
     for edge in graph.edges(data=True):
         _r = deepcopy(edge[2]['seg'])
-        _q = _r[1:]-_r[:-1]
-        _q = np.sign(_q)*(np.abs(_q)%rfile.cell) # valid beyond min. image convention
-        _q = _q - rfile.cell*np.trunc(_q/(.5*rfile.cell))
-        
-        _r = edge[2]['ends'][0] + np.r_[[np.r_[0,0,0]], np.cumsum(_q, axis=0)]
+        _dr = _r[1:]-_r[:-1]
+
+        # convert to fractional coordinates and loop back into cell 
+        _df = [rfile.cmati@(_dri-rfile.r0) for _dri in _dr]
+        _df = [_dfi-np.round(_dfi) for _dfi in _df]
+
+        # convert back to cartesian coordinates
+        _dr = [rfile.r0 + rfile.cmat@_dfi for _dfi in _df]
+
+        _r = edge[2]['ends'][0] + np.r_[np.zeros((1,3)), np.cumsum(_dr, axis=0)]
         edge[2]['seg'] = _r
 
 
@@ -376,13 +148,23 @@ def relink_graph(graph):
         processed_nodes = []
         scheduled_nodes = []
 
+        #_outedge = list(_subgraph.edges)[min(38, len(list(_subgraph.edges))-1)]
         _outedge = list(_subgraph.edges)[0]
 
         anchor_pos = _subgraph.get_edge_data(*_outedge)['seg'][0]
         anchor_node = _outedge[0]
         scheduled_nodes += [[anchor_pos, anchor_node]]
         processed_edges += [_outedge]
-        
+
+        ''' 
+        if _i == 28:
+            # these are all the edges
+            _edges = list(_subgraph.edges)
+            for _edge in _edges: 
+                print (_edge, _subgraph.get_edge_data(*_edge)['seg'])
+            return 0
+        '''
+
         _res = recursive_link(_subgraph, processed_edges, processed_nodes, scheduled_nodes)
         if _res == 1:
             print ("Warning! Failed at subgraph %d." % _i)
@@ -522,149 +304,187 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
     print ("Searching for threading dislocations by checking for dangling nodes.")
     dangling_nodes = []
     subgraph_ids = []
+
+
+    print ("\nLooking for dangling nodes.")   
+    found = False
+    dangling_nodes = []
     for _sid,_subgraph in enumerate(sgraph):
         _sedges = np.array(_subgraph.edges)
         for _node in _subgraph.nodes:
             
-            # first check outgoing edges
+            # first check outgoing edges for this node
             _outgoing = np.where(_sedges[:,0] == _node)[0]
             _roots_out = [_subgraph.get_edge_data(*_s)['seg'][0] for _s in _sedges[_outgoing]]
             
-             # then check ingoing edges
+             # then check ingoing edges for this node
             _ingoing = np.where(_sedges[:,1] == _node)[0]
             _roots_in = [_subgraph.get_edge_data(*_s)['seg'][-1] for _s in _sedges[_ingoing]]
             
-            # if the edges attached to the node have differing roots, it is a dangling node
+            # if the edges attached to the node have different roots, it is a dangling node
             _roots  = np.array(_roots_out + _roots_in)
-            _rootdist = np.linalg.norm(_roots-_roots[0], axis=1)
-            if np.sum(_rootdist) > 1e-3:
-                
-                # store dangling node and unique pbc-displaced node positions
-                dangling_xyz = np.vstack(list({tuple(row) for row in _roots}))        
-                dangling_nodes += [[_node, dangling_xyz]]
-                subgraph_ids += [_sid]
- 
+            _uroots = np.unique(np.round(_roots, 6), axis=0) # it is annoying but we need to round since checking unique of floats
+            _rootdist = np.linalg.norm(_uroots-_roots[0], axis=1)
+
+            # we only care about the nodes that are actually dangling 
+            _bool = (_rootdist > 1e-3)
+
+            # store dangling node, unique pbc-displaced node positions, and the corresponding pbc image vector
+            if np.sum(_bool) > 0:
+                if not found:
+                    print ("graph id, node id, root node pos, pbc-displaced pos, node-closer-to-corner pos, difference vector in frac.coordinates")
+                    found = True
+
+                #print (_uroots, _bool)
+
+                # we store information on the dangling node in a dictionary for better access 
+                _node_dict = {}
+                _node_dict["subgraph_id"] = _sid
+                _node_dict["node_id"] = _node
+                _node_dict["root_node"] = _roots[0]
+                _node_dict["pbc_nodes"] = _uroots[_bool]
+
+                # difference vector
+                _dvecs = _uroots[_bool] - _roots[0]
+                _dist = np.linalg.norm(_dvecs, axis=1)
+
+                # convert image vector to fractional coordinates
+                _fvecs = [rfile.cmati@_dd for _dd in _dvecs]
+                _fvecs = np.round(_fvecs).astype(int)
+
+                '''
+                # sign convention
+                for _fvec in _fvecs:
+                    for _fi in range(3):
+                        if _fvec[2-_fi] < 0:
+                            _fvec *= -1
+                '''
+
+                # avoid -0.0...
+                for _fvec in _fvecs:
+                    _fvec[np.abs(_fvec) < 1e-9] = 0.0
+
+                # return image vector to cartesian coordinates 
+                _cvecs = [rfile.cmat@_fvec for _fvec in _fvecs]
+                for _cvec in _cvecs:
+                    _cvec[np.abs(_cvec) < 1e-9] = 0.0
+
+                _node_dict["frac_vecs"] = _fvecs
+                _node_dict["pbc_vecs"] = _cvecs
+
+                # determine node lying closer to the [111] point
+                _node_dict["corner_pos"] = rfile.cmat@np.r_[1,1,1] + rfile.r0
+                _node_dict["connecting_node"] = np.zeros_like(_node_dict["pbc_nodes"])
+                for _pi,_pos2 in enumerate(_node_dict["pbc_nodes"]):
+                    _pos1 = _node_dict["root_node"]
+                    _d1 = np.linalg.norm(_node_dict["corner_pos"]-_pos1) 
+                    _d2 = np.linalg.norm(_node_dict["corner_pos"]-_pos2) 
+                    if _d1 < _d2:
+                        _node_dict["connecting_node"][_pi] = _pos1
+                    else:
+                        _node_dict["connecting_node"][_pi] = _pos2
+                        _node_dict["frac_vecs"][_pi] *= -1
+                        _node_dict["pbc_vecs"][_pi]  *= -1
+
+                for _pi,_pos2 in enumerate(_node_dict["pbc_nodes"]):
+                    _pos1 = _node_dict["root_node"]
+                    _fvec = _node_dict["frac_vecs"][_pi]
+                    _cpos =  _node_dict["connecting_node"][_pi]
+                    print ("\t%5d %5d [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%2d %2d %2d]" % (_node_dict["subgraph_id"], _node_dict["node_id"], 
+                                                        _pos1[0], _pos1[1], _pos1[2], _pos2[0], _pos2[1], _pos2[2], 
+                                                        _cpos[0], _cpos[1], _cpos[2], _fvec[0], _fvec[1], _fvec[2]))
+
+
+                dangling_nodes += [_node_dict]
+
     # stop routine if no broken nodes are found (no threading dislocations) 
     if dangling_nodes == []:
         print ("No threading dislocations found.\n")
         return False 
 
-    # for every dangling node, fetch the image vector
-    cvecs = []
-    cmatrix = np.diag(rfile.cell)
-    if 1:
-        for _d in dangling_nodes:
-            _diff = _d[1][1]-_d[1][0]
-            _cvec = np.sum(np.sign(_diff)*cmatrix[np.abs(_diff)>1.0], axis=0)
-
-            # convention
-            for _q in range(3):
-                if _cvec[_q] < 0:
-                    _cvec *= -1
-
-            # avoid -0.0...
-            _cvec[np.abs(_cvec) < 1e-6] = 0.0
-            cvecs += [_cvec]
- 
-    if 0:
-        for _d in dangling_nodes:
-            _diff = _d[1][1]-_d[1][0]
-            _cvec = np.sum(np.sign(_diff)*cmatrix[np.abs(_diff)>1.0], axis=0)
-            if _cvec[0] < 0:
-                _cvec *= -1
-            cvecs += [_cvec]
-    
-    for _i in range(len(cvecs)): 
-        _pos1 =  dangling_nodes[_i][1][0]
-        _pos2 =  dangling_nodes[_i][1][1]
-        _vec = cvecs[_i]
-        print ("\t%5d %5d [%8.3f %8.3f %8.3f] [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]" % (subgraph_ids[_i], dangling_nodes[_i][0], 
-                                                                        _pos1[0], _pos1[1], _pos1[2], _pos2[0], _pos2[1], _pos2[2], _vec[0], _vec[1], _vec[2]))
-    print ()
-
-       
-    # of the two dangling node images, keep the one with largest value projected along the pbc direction 
-    for _i,_d in enumerate(dangling_nodes):
-        _proj = [np.dot(_npos, cvecs[_i]) for _npos in _d[1]]
-        _d[1] = _d[1][np.argmax(_proj)]
-
-    print ("Found the following dangling nodes with corresponding PBC image vector:")
-    print ("graph id, node id, position, image vector")
-    for _i in range(len(cvecs)): 
-        _pos =  dangling_nodes[_i][1]
-        _vec = cvecs[_i]
-        print ("\t%5d %5d [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]" % (subgraph_ids[_i], dangling_nodes[_i][0], _pos[0], _pos[1], _pos[2], _vec[0], _vec[1], _vec[2]))
-    print ()
-
-    # group nodes with unique cvecs together as they are bundled separately 
-    cvecs_grouping = np.unique(cvecs, axis=0, return_inverse=True)
-
-    # build dictionary containing the dangling node id and corresponding outgoing burgers vector needed for closure 
+    # determine closure condition of the dangling node
     print ("Determining (outgoing) Burgers vector needed to close the node according to Kirchhoff's law.")
-    print ("grpah id, node id, burgers vector")
-    bclosures = {}
-    for _i,_dang in enumerate(dangling_nodes):
-        _node,_pos = _dang
-        _subgraph = sgraph[subgraph_ids[_i]]
+    print ("graph id, node id, connecting node index, burgers vector")
+    for _node_dict in dangling_nodes:
+        _node = _node_dict["node_id"]
+        _subgraph = sgraph[_node_dict["subgraph_id"]]
         _sedges = np.array(_subgraph.edges)
 
-        # fetch outgoing edges and keep the ones that emerge specifically from that node image
-        _outgoing = np.where(_sedges[:,0] == _node)[0]
-        _roots_out = [_subgraph.get_edge_data(*_s)['seg'][0] for _s in _sedges[_outgoing]]
-        if _roots_out:
-            _outedges = _sedges[_outgoing][np.linalg.norm(_roots_out - _pos, axis=1)<1e-3]
-            _bout = [_subgraph.get_edge_data(*_s)['burgers'] for _s in _outedges]
-        else:
+        _node_dict["bclosure"] = np.zeros_like(_node_dict["connecting_node"])
+
+        for _cpi,_cpos in enumerate(_node_dict["connecting_node"]):
+            # fetch outgoing edges of this node and keep the ones that are unbroken
+            _outgoing = np.where(_sedges[:,0] == _node)[0]
+            _roots_out = [_subgraph.get_edge_data(*_s)['seg'][0] for _s in _sedges[_outgoing]]
             _bout = []
-            
-        # fetch ingoing edges and keep the ones that emerge specifically from that node image
-        _ingoing = np.where(_sedges[:,1] == _node)[0]
-        _roots_in = [_subgraph.get_edge_data(*_s)['seg'][-1] for _s in _sedges[_ingoing]]
-        if _roots_in:
-            _inedges = _sedges[_ingoing][np.linalg.norm(_roots_in - _pos, axis=1)<1e-3]
-            _bin  = [_subgraph.get_edge_data(*_s)['burgers'] for _s in _inedges]
-        else:
+            if _roots_out:
+                _outedges = _sedges[_outgoing][np.linalg.norm(_roots_out - _cpos, axis=1)<1e-3]
+                _bout += [_subgraph.get_edge_data(*_s)['burgers'] for _s in _outedges]
+                
+            # fetch ingoing edges of this node and keep the ones that are unbroken
+            _ingoing = np.where(_sedges[:,1] == _node)[0]
+            _roots_in = [_subgraph.get_edge_data(*_s)['seg'][-1] for _s in _sedges[_ingoing]]
             _bin = []
-       
-        # compute burgers vector needed to close 
-        _bclosure = np.r_[[0.,0.,0.]]
-        if _bin != []:
-            _bclosure += np.sum(_bin, axis=0)
-        if _bout != []:
-            _bclosure -= np.sum(_bout, axis=0)
-        bclosures[_node] = _bclosure
+            if _roots_in:
+                _inedges = _sedges[_ingoing][np.linalg.norm(_roots_in - _cpos, axis=1)<1e-3]
+                _bin += [_subgraph.get_edge_data(*_s)['burgers'] for _s in _inedges]
+     
+            # compute burgers vector needed to close 
+            _bclosure = np.zeros(3) 
+            if _bin != []:
+                _bclosure += np.sum(_bin, axis=0)
+            if _bout != []:
+                _bclosure -= np.sum(_bout, axis=0)
 
-        print ("\t%5d %5d [%8.3f %8.3f %8.3f]" % (subgraph_ids[_i], _node, _bclosure[0], _bclosure[1], _bclosure[2])) 
-    print ()
+            _node_dict["bclosure"][_cpi] = _bclosure
+            print ("\t%5d %5d %2d [%8.3f %8.3f %8.3f]" % (_node_dict["subgraph_id"], _node, _cpi, _bclosure[0], _bclosure[1], _bclosure[2])) 
 
-    
+
     # loop over all broken nodes and compute relaxation volume correction 
     print ("Computing periodic closure correction to the relaxation volume.")
+    #print ("bvec, dangling node pos, pbc image vector, root node pos")
     _omega = 0
-    for _ci,_cvec in enumerate(cvecs_grouping[0]):
-        # fetch nodes with that cell vector 
-        _nodes = [_d for _i,_d in enumerate(dangling_nodes) if (cvecs_grouping[1]==_ci)[_i]]
-        _bvecs = [bclosures[_n[0]] for _n in _nodes]
-        
-        for _i in range(1, len(_nodes)):
-            _omega += -.5*np.dot(_bvecs[_i], np.cross(_cvec, _nodes[_i][1]-_nodes[0][1]))
-            _bnet = _bvecs[0] + np.sum(_bvecs[1:], axis=0)
-            if not (_bnet == 0).all():
-                print ("Error: net Burgers vector in grouping %3d is not zero!" % _ci, " net b:", _bnet) 
-                print ()
-                return False
+    _bnet = np.zeros(3) 
+    for _ndi,_node_dict in enumerate(dangling_nodes):
+        _node = _node_dict["node_id"]
+        _subgraph = sgraph[_node_dict["subgraph_id"]]
+        _sedges = np.array(_subgraph.edges)
+        _corner_pos = _node_dict["corner_pos"]
+
+        for _cpi,_cpos in enumerate(_node_dict["connecting_node"]):
+
+            _bvec = _node_dict["bclosure"][_cpi]
+            _cvec = _node_dict["pbc_vecs"][_cpi]
+            _omega += .5*np.dot(_bvec, np.cross(_cvec, -_corner_pos+_cpos))
+            _bnet += _bvec 
+
+            #_term =  -.5*np.dot(_bvec, np.cross(_cvec, -_corner_pos+_cpos))
+            #print ("\t[%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f] %8.3f" % (
+            #                                    _bvec[0], _bvec[1], _bvec[2], _cpos[0], _cpos[1], _cpos[2], _cvec[0], _cvec[1], _cvec[2],
+            #                                    _corner_pos[0], _corner_pos[1], _corner_pos[2], _term))
+
+    if not (_bnet == 0).all():
+        print ("Warning: net Burgers vector in corner node is not zero. Net b:", _bnet) 
+        print ()
+        #return False
+
 
     # loop over all broken nodes and compute relaxation volume tensor correction 
     print ("Computing periodic closure correction to the relaxation volume tensor.")
     _omegaij = np.zeros((3,3))
-    for _ci,_cvec in enumerate(cvecs_grouping[0]):
-        # fetch nodes with that cell vector 
-        _nodes = [_d for _i,_d in enumerate(dangling_nodes) if (cvecs_grouping[1]==_ci)[_i]]
-        _bvecs = [bclosures[_n[0]] for _n in _nodes]
-        
-        for _i in range(1, len(_nodes)):
-            _outer = -.5*np.outer(_bvecs[_i], np.cross(_cvec, _nodes[_i][1]-_nodes[0][1]))
-            _omegaij += .5*(_outer + _outer.T)
+    for _ndi,_node_dict in enumerate(dangling_nodes):
+        _node = _node_dict["node_id"]
+        _subgraph = sgraph[_node_dict["subgraph_id"]]
+        _sedges = np.array(_subgraph.edges)
+        _corner_pos = _node_dict["corner_pos"]
+
+        for _cpi,_cpos in enumerate(_node_dict["connecting_node"]):
+
+            _bvec = _node_dict["bclosure"][_cpi]
+            _cvec = _node_dict["pbc_vecs"][_cpi]
+            _outer = .5*np.outer(_bvec, np.cross(_cvec, -_corner_pos+_cpos))
+            _omegaij += .5*(_outer + _outer.T) 
+
 
     print ("Relaxation volume correction: %14.8f atomic volumes" % (alattice*_omega/omega0))
     print ()
