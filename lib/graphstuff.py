@@ -24,21 +24,17 @@ def segment_continuity(graph, rfile):
     # enforce continuity of segments across PBC
     for edge in graph.edges(data=True):
         _r = deepcopy(edge[2]['seg'])
+
+        # wrap distance vectors according to minimum image convention
         _dr = _r[1:]-_r[:-1]
+        _dr = np.array([rfile.minimg(_dri) for _dri in _dr])
 
-        # convert to fractional coordinates and loop back into cell 
-        _df = [rfile.cmati@(_dri-rfile.r0) for _dri in _dr]
-        _df = [_dfi-np.round(_dfi) for _dfi in _df]
-
-        # convert back to cartesian coordinates
-        _dr = [rfile.r0 + rfile.cmat@_dfi for _dfi in _df]
-
+        # reconstruct segment coordinates from cumulative distance vector sum
         _r = edge[2]['ends'][0] + np.r_[np.zeros((1,3)), np.cumsum(_dr, axis=0)]
         edge[2]['seg'] = _r
 
-
 def kirchhoff_check(graph): 
-    '''Check if kirchhoff's law is violated.'''
+    '''Check if Kirchhoff's law is violated.'''
     print ("Checking if Kirchhoff's law is violated.")
     viol=False
     for node in graph.nodes:
@@ -148,7 +144,6 @@ def relink_graph(graph):
         processed_nodes = []
         scheduled_nodes = []
 
-        #_outedge = list(_subgraph.edges)[min(38, len(list(_subgraph.edges))-1)]
         _outedge = list(_subgraph.edges)[0]
 
         anchor_pos = _subgraph.get_edge_data(*_outedge)['seg'][0]
@@ -156,50 +151,11 @@ def relink_graph(graph):
         scheduled_nodes += [[anchor_pos, anchor_node]]
         processed_edges += [_outedge]
 
-        ''' 
-        if _i == 28:
-            # these are all the edges
-            _edges = list(_subgraph.edges)
-            for _edge in _edges: 
-                print (_edge, _subgraph.get_edge_data(*_edge)['seg'])
-            return 0
-        '''
-
         _res = recursive_link(_subgraph, processed_edges, processed_nodes, scheduled_nodes)
         if _res == 1:
             print ("Warning! Failed at subgraph %d." % _i)
     return gcopy
 
-
-
-
-
-if 0:
-    def relaxationvolume(sgraph, alattice, omega0, offset=[0,0,0], verbose=1):
-        '''Compute the relaxation volume of all closed networks.'''
-
-        offset = np.r_[offset]
-        
-        omegalist = []
-        for _i,_subgraph in enumerate(sgraph):
-            omega = 0
-
-            for edge in _subgraph.edges(data=True):
-                _b = edge[2]['burgers']
-                _r = edge[2]['seg']
-                _dr = _r[1:]-_r[:-1]
-
-                omega += alattice*np.sum([.5*np.dot(_b, _q) for _q in np.cross(_r[:-1]-offset, _dr, axis=1)])
-            omegalist += [omega]
-            if verbose:
-                print ('Relaxation volume of subgraph %4d: %14.8f atomic volumes' % (_i, omega/omega0))
-           
-        omegalist = np.r_[omegalist]
-        omegatot = np.sum(omegalist)
-        if verbose:
-            print ('Total relaxation volume: %14.8f atomic volumes' % (omegatot/omega0))
-
-        return omegatot/omega0, omegalist/omega0
 
 def linelength(sgraph, verbose=1):
     '''Compute the dislocation line lengths of all segments and classify by Burgers vector norm.'''
@@ -248,7 +204,7 @@ def relaxationvolume(sgraph, alattice, omega0, offset=[0,0,0], verbose=1):
         for edge in _subgraph.edges(data=True):
             _b = edge[2]['burgers']
             _r = edge[2]['seg']
-            omega += alattice*np.sum([.5*np.dot(_b, np.cross(_r[_j], _r[_j+1])) for _j in range(len(_r)-1)])
+            omega += alattice*np.sum([.5*np.dot(_b, np.cross(_r[_j], _r[_j+1])) for _j in range(len(_r)-1) if np.linalg.norm(_r[_j+1]-_r[_j]) < 90.0])
 
         omegalist += [omega]
         if verbose:
@@ -274,7 +230,7 @@ def relaxationvolumetensor(sgraph, alattice, omega0, offset=[0,0,0], verbose=1):
             _b = edge[2]['burgers']
             _r = edge[2]['seg']
 
-            _outer = alattice*np.sum([.5*np.outer(_b, np.cross(_r[_j], _r[_j+1])) for _j in range(len(_r)-1)], axis=0)
+            _outer = alattice*np.sum([.5*np.outer(_b, np.cross(_r[_j], _r[_j+1])) for _j in range(len(_r)-1) if np.linalg.norm(_r[_j+1]-_r[_j]) < 90.0], axis=0)
             omegaij += .5*(_outer + _outer.T)
 
         omegaijlist += [omegaij]
@@ -305,22 +261,22 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
     dangling_nodes = []
     subgraph_ids = []
 
-
     print ("\nLooking for dangling nodes.")   
     found = False
     dangling_nodes = []
     for _sid,_subgraph in enumerate(sgraph):
         _sedges = np.array(_subgraph.edges)
+
         for _node in _subgraph.nodes:
             
-            # first check outgoing edges for this node
+            # first check starting point of outgoing edges for this node
             _outgoing = np.where(_sedges[:,0] == _node)[0]
             _roots_out = [_subgraph.get_edge_data(*_s)['seg'][0] for _s in _sedges[_outgoing]]
             
-             # then check ingoing edges for this node
+             # then check ending point of ingoing edges for this node
             _ingoing = np.where(_sedges[:,1] == _node)[0]
             _roots_in = [_subgraph.get_edge_data(*_s)['seg'][-1] for _s in _sedges[_ingoing]]
-            
+           
             # if the edges attached to the node have different roots, it is a dangling node
             _roots  = np.array(_roots_out + _roots_in)
             _uroots = np.unique(np.round(_roots, 6), axis=0) # it is annoying but we need to round since checking unique of floats
@@ -332,7 +288,7 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
             # store dangling node, unique pbc-displaced node positions, and the corresponding pbc image vector
             if np.sum(_bool) > 0:
                 if not found:
-                    print ("graph id, node id, root node pos, pbc-displaced pos, node-closer-to-corner pos, difference vector in frac.coordinates")
+                    print ("graph id, node id, connecting node index, root node pos, pbc-displaced pos, node-closer-to-corner pos, difference vector in frac.coordinates")
                     found = True
 
                 #print (_uroots, _bool)
@@ -343,6 +299,8 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
                 _node_dict["node_id"] = _node
                 _node_dict["root_node"] = _roots[0]
                 _node_dict["pbc_nodes"] = _uroots[_bool]
+
+                #_node = _node_dict["node_id"]
 
                 # difference vector
                 _dvecs = _uroots[_bool] - _roots[0]
@@ -377,9 +335,12 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
                 _node_dict["connecting_node"] = np.zeros_like(_node_dict["pbc_nodes"])
                 for _pi,_pos2 in enumerate(_node_dict["pbc_nodes"]):
                     _pos1 = _node_dict["root_node"]
-                    _d1 = np.linalg.norm(_node_dict["corner_pos"]-_pos1) 
-                    _d2 = np.linalg.norm(_node_dict["corner_pos"]-_pos2) 
-                    if _d1 < _d2:
+     
+                    _d1 = _pos1@_node_dict["corner_pos"]
+                    _d2 = _pos2@_node_dict["corner_pos"]
+                    #_d1 = np.linalg.norm(_node_dict["corner_pos"]-_pos1) 
+                    #_d2 = np.linalg.norm(_node_dict["corner_pos"]-_pos2) 
+                    if _d1 > _d2:
                         _node_dict["connecting_node"][_pi] = _pos1
                     else:
                         _node_dict["connecting_node"][_pi] = _pos2
@@ -390,7 +351,7 @@ def pbc_volume_correction(sgraph, alattice, omega0, rfile, verbose=True):
                     _pos1 = _node_dict["root_node"]
                     _fvec = _node_dict["frac_vecs"][_pi]
                     _cpos =  _node_dict["connecting_node"][_pi]
-                    print ("\t%5d %5d [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%2d %2d %2d]" % (_node_dict["subgraph_id"], _node_dict["node_id"], 
+                    print ("\t%5d %5d %2d [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%8.3f %8.3f %8.3f]  [%2d %2d %2d]" % (_node_dict["subgraph_id"], _node_dict["node_id"], _pi, 
                                                         _pos1[0], _pos1[1], _pos1[2], _pos2[0], _pos2[1], _pos2[2], 
                                                         _cpos[0], _cpos[1], _cpos[2], _fvec[0], _fvec[1], _fvec[2]))
 

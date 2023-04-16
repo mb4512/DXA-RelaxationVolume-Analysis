@@ -162,7 +162,7 @@ class ReadDump:
             # split into segments
             maxid = np.max(self.id)
             segments = [np.where(_id == self.id)[0] for _id in range(maxid+1)]
-            self.xyz = [self.xyz[_seg] for _seg in segments]
+            self.xyz = [self.xyz[_seg] for _seg in segments] 
 
             self.btrue    = np.r_[[self.btrue[_seg][0]    for _seg in segments]]
             self.bspatial = np.r_[[self.bspatial[_seg][0] for _seg in segments]]
@@ -175,28 +175,24 @@ class ReadDump:
             print ("\nImported %d atoms from file: %s" % (self.natoms, self.fpath))            
         print ()
 
-        '''
-        # wrap atoms back into simulation cell if outside
-        #self.xyz = np.r_[[self.pbcwrap1(_x) for _x in self.xyz]]
-
-        # build KDTree of periodically repeated reference structure for nearest neighbour search
-        print ("\nConstructing KD-tree.")
-        t0 = time.time()
-
-        # build KDTree of periodically repeated reference structure for nearest neighbour search
-        self.kindices, self.kdtree = self.build_triclinic_kdtree(self.xyz)
-
-        print ('Completed after %6.3f seconds.' % (time.time()-t0))
-        '''
+        # wrap coordinates back into box (this is neccessary as our triclinic kdtree only considers 1st neighbour images)
+        self.xyz = [np.array([self.pbcwrap(_r) for _r in _segment]) for _segment in self.xyz]
 
         return 0
 
 
     def pbcwrap(self, xyz):
-        '''Check if a vector falls outside the box, and if so, wrap it back inside.'''
+        '''Check if a point lies outside the box, and if so, wrap it back inside.'''
         fcoords = np.matmul(self.cmati, xyz - self.r0)
         gcoords = fcoords - np.floor(fcoords)
         return self.r0 + np.matmul(self.cmat, gcoords)
+
+    def minimg(self, dr):
+        '''Compute distance from vector using minimum image convention''' 
+        fcoords = np.matmul(self.cmati, dr - self.r0)
+        fcoords[fcoords >  0.5] -= 1.0
+        fcoords[fcoords < -0.5] += 1.0
+        return self.r0 + np.matmul(self.cmat, fcoords)
 
     def build_triclinic_kdtree(self, xyz):
         ids = np.r_[:len(xyz)]

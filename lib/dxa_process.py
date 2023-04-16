@@ -303,10 +303,6 @@ def link_network(rfile, dmax=15.0, djoin=1.0e-3):
         print ("All segments connected.")
         successflag = True
 
-    np.savetxt('de11.dat', de11, fmt="%d")
-    np.savetxt('de12.dat', de12, fmt="%d")
-    np.savetxt('de21.dat', de21, fmt="%d")
-    np.savetxt('de22.dat', de22, fmt="%d")
     return de11, de12, de21, de22, endsw1, endsw2, successflag
 
 
