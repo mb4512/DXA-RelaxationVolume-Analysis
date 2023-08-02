@@ -64,7 +64,7 @@ def main():
         xdel = xmax-xmin
 
         # convert to fractional coordinates
-        fdel = rfile.cmati@xdel
+        fdel = rfile.cmati@(xdel + 1e-5) # need to add a tiny bit because of rounding in *.dump file
         fextended = fdel>=1 
 
         if (fextended == True).any():
@@ -85,7 +85,6 @@ def main():
    
     #extended_dict = large_network_dict
 
-    #'''
     # if networks exist that are larger than any dimension of the box, check if they are extended 
     extended_dict = {}
     for _sid in large_network_dict:
@@ -130,7 +129,6 @@ def main():
                     for _bi,_extended in enumerate(extended_dict[_sid]):
                         if _extended:
                             edge[2]['seg'][:,_bi] = _wrapped[:,_bi]
-    #'''
 
     if extended_dict != {}:
         extended = True
@@ -245,8 +243,8 @@ def main():
             assert (np.abs(np.sum(boundary_bvecs[_k], axis=0)) < 1e-6).all(), "Error: net Burgers vector of dislocations threading along dim %d is non-zero!" % _k
             assert len(boundary_points[_k]) != 1, "Error: found just a single threaded dislocation along dim %d! Closure impossible." % _k 
 
-        print (boundary_points)
-        print (boundary_bvecs) 
+        #print (boundary_points)
+        #print (boundary_bvecs) 
 
     if 0==1:
         # compute dislocation line lengths
@@ -263,22 +261,98 @@ def main():
         np.savetxt('%s.line' % fname, exportlines, fmt="%10.4f %16.8f")
 
         return 0
- 
-    # compute periodic correction relaxation volume tensor 
+
+    # compute periodic correction relaxation volume tensor
     if extended:
+        correction_branches = {}
+ 
         # loop over all boundary points and compute relaxation volume correction 
         print ("Computing periodic closure correction to the relaxation volume.")
 
+        # first close networks extended along _pi:=x, then y, then z 
         _omegaij = np.zeros((3,3))
-        for _k in boundary_points.keys():
-            bdpts = boundary_points[_k]  
-            bvecs = boundary_bvecs[_k]
+        for _pi in boundary_points.keys():
+            correction_branches[_pi] = []
+
+            print ("boundary point:", _pi, boundary_points[_pi])
+            bdpts = boundary_points[_pi]  
+            bvecs = boundary_bvecs[_pi]
+
+            # all extended network points lying on the boundary close into the first extended point 
             for _i in range(1, len(bdpts)):
-                _outer = -.5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_k], bdpts[_i]-bdpts[0]))
+
+                # use the minimum image convention here
+                _dist_i0 = bdpts[_i]-bdpts[0]
+                _frac_i0 = rfile.cmati@_dist_i0 # convert to fractional coordinates
+                _frac_i0[_frac_i0 > .5] -= 1.0
+                _frac_i0[_frac_i0<=-.5] += 1.0
+                _dist_i0 = rfile.cmat@_frac_i0 # convert back to cartesian coordinates
+
+                #print ("bvec, cmat, dist, frac:", bvecs[_i], rfile.cmat[:,_pi], _dist_i0, _frac_i0)
+                _outer = -.5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_pi], _dist_i0)) 
                 _omegaij += .5*(_outer + _outer.T) 
 
+                # add a PBC correction branch
+                for _pj in range(3):
+                    for _pk in range(3):
+                        # do not consider closure along extended network direction
+                        if _pi == _pj or _pi == _pk or _pj == _pk:
+                            continue
+                       
+                        #if _frac_i0[_pi] < 0.0:
+                        #    correction_branches[_pi] += [+.5*np.dot(bvecs[_i], np.cross(rfile.cmat[:,_pi], rfile.cmat[:,_j]))]
+                        #else:
+                        #    correction_branches[_pi] += [-.5*np.dot(bvecs[_i], np.cross(rfile.cmat[:,_pi], rfile.cmat[:,_j]))]
+
+                        # loop over all possible closure combinations
+                        for _img_j in [-1,0,1]:
+                            for _img_k in [-1,0,1]:
+                                correction_tensor = .5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))
+                                correction_tensor = .5*(correction_tensor + correction_tensor.T)
+                                correction_branches[_pi] += [correction_tensor]
+
+                                #correction_branches[_pi] += [+.5*np.dot(bvecs[_pi], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))]
+                                #correction_branches[_pi] += [-.5*np.dot(bvecs[_pi], np.cross(rfile.cmat[:,_pi], rfile.cmat[:,_pj]))]
+
+                                #print ("dim=%d, b=(%6.3f,%6.3f,%6.3f) closure along cj,ck=(%2d,%2d) branch: %14.7f" % \
+                                #            (_pi, bvecs[_i][0], bvecs[_i][1], bvecs[_i][2], _img_j, _img_k, np.trace(correction_branches[_pi][-1])*alattice/omega0))
+                        #print ("corrections: ±", correction_branches[_pi][0]*alattice/omega0)
+
+        '''
+        # construct periodic closure branches 
+        if extended:
+            correction_branches = {}
+     
+            # first close networks extended along _pi:=x, then y, then z 
+            for _pi in boundary_points.keys():
+                correction_branches[_pi] = []
+
+                # only consider the unique burgers vectors along this dimension
+                bvecs = boundary_bvecs[_pi]
+
+                # all extended network points lying on the boundary close into the first extended point 
+                for _i in range(1, len(bdpts)):
+
+                    # add a PBC correction branch
+                    for _pj in range(3):
+                        for _pk in range(3):
+                            # do not consider closure along extended network direction
+                            if _pi == _pj or _pi == _pk or _pj == _pk:
+                                continue
+
+                            # loop over all possible closure combinations
+                            for _img_j in [-1,0,1]:
+                                for _img_k in [-1,0,1]:
+                                    correction_tensor = .5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))
+                                    correction_tensor = .5*(correction_tensor + correction_tensor.T)
+                                    correction_branches[_pi] += [correction_tensor]
+        '''
+        
+
         _omega = np.trace(_omegaij)
-        pbcvolume, pbcvolumetensor = alattice*_omega/omega0, alattice*_omegaij/omega0 
+        pbcvolume, pbcvolumetensor = alattice*_omega/omega0, alattice*_omegaij/omega0
+
+        '''
         print ("Relaxation volume correction: %14.8f atomic volumes\n" % pbcvolume)
         print ('Periodic relaxation volume tensor correction in atomic volumes: ') 
         print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0]))
@@ -293,7 +367,77 @@ def main():
         print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[1]+pbcvolumetensor[1]))
         print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[2]+pbcvolumetensor[2]))
         print ()
+        '''
 
+        # only retain unique branches
+        for _pi in correction_branches.keys():
+            correction_branches[_pi] = np.unique(correction_branches[_pi], axis=0)
+            if correction_branches[_pi].size == 0:
+                correction_branches[_pi] = np.array([np.zeros((3,3))])
+
+        # closures are treated independently along the x,y,z directions. hence we need to consider all combinations
+        corrections_all = []
+        for _ci in correction_branches[0]:
+            for _cj in correction_branches[1]:
+                for _ck in correction_branches[2]:
+                    corrections_all += [_ci + _cj + _ck]
+        
+        # only retain unique branches
+        corrections_all = np.unique(corrections_all, axis=0) 
+ 
+        # report on correction branches
+        print ()
+        print ("Suggested correction branches for PBC-corrected relaxation volume (atomic volumes):") 
+        print (pbcvolume)
+        for _corr in corrections_all: 
+            print (pbcvolume + alattice*np.trace(_corr)/omega0)
+        print ()
+
+            # report on correction branches
+        print ()
+        print ("Suggested correction branches for PBC-corrected relaxation volume tensor (atomic volumes):") 
+        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0]))
+        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1]))
+        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2]))
+        print ()
+        for _corr in corrections_all: 
+            print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0] + alattice*_corr[0]/omega0))
+            print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1] + alattice*_corr[1]/omega0))
+            print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2] + alattice*_corr[2]/omega0))
+            print ()
+        print ()
+
+        '''
+        # report on correction branches
+        print ()
+        print ("Suggested correction branches for PBC-corrected relaxation volume (atomic volumes):") 
+        print (pbcvolume)
+        for _pi in correction_branches.keys():
+            if correction_branches[_pi] is []:
+                continue
+
+            for _corr in correction_branches[_pi]:
+                print (pbcvolume + alattice*np.trace(_corr)/omega0)
+        print ()
+
+        # report on correction branches
+        print ()
+        print ("Suggested correction branches for PBC-corrected relaxation volume tensor (atomic volumes):") 
+        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0]))
+        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1]))
+        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2]))
+        print ()
+        for _pi in correction_branches.keys():
+            if correction_branches[_pi] is []:
+                continue
+
+            for _corr in correction_branches[_pi]:
+                print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0] + alattice*_corr[0]/omega0))
+                print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1] + alattice*_corr[1]/omega0))
+                print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2] + alattice*_corr[2]/omega0))
+                print ()
+        print ()
+        '''
 
     # determine real loop linesense 
     # import the complete atomic dump file
