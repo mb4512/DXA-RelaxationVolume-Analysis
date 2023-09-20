@@ -5,6 +5,14 @@ from lib.readfile import *
 from lib.dxa_process import *
 from lib.graphstuff import *
 
+import scipy
+
+BRANCHES=False
+HABITPLANE=True
+SCHMID=False
+SIZES=False
+SCHMIDDIRECTIONS = [[1,1,1], [1,1,-1], [1,-1,1], [1,-1,-1], [-1,1,1], [-1,1,-1], [-1,-1,1], [-1,-1,-1]]
+
 def main():
 
     fpath = sys.argv[1]
@@ -150,13 +158,154 @@ def main():
         print ("Relaxation volume passed check for translational invariance.\n")
 
     # compute relaxation volume tensor 
-    volumetensor,_ = relaxationvolumetensor(sshifted, alattice, omega0, offset=[0,0,0], verbose=False)
+    volumetensor,volumetensors = relaxationvolumetensor(sshifted, alattice, omega0, offset=[0,0,0], verbose=False)
     print ('Relaxation volume tensor in atomic volumes: ') 
     print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[0]))
     print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[1]))
     print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[2]))
     print ()
 
+
+    if HABITPLANE:
+        # compute and export loop habit normal vectors 
+        print ("Computing loop habit plane normal vectors.")
+        def nhat(theta,phi):
+            nx = np.cos(theta) * np.sin(phi)
+            ny = np.sin(theta) * np.sin(phi)
+            nz = np.cos(phi)
+            nhat = np.array([nx,ny,nz])
+            return nhat
+
+        def minfunc(p0, rpts):
+            nh = nhat(*p0)
+            return np.std([np.linalg.norm(_r@nh) for _r in rpts])
+
+        nhatlist = {}
+        devlist = {}
+        r0list = {}
+
+        # 10 x 10 grid of initial parameters
+        theta0,phi0 = np.meshgrid(np.r_[1:10]/10 * 2*np.pi, np.r_[1:10]/10 * np.pi)
+        pinit = np.vstack([theta0.ravel(), phi0.ravel()]).T
+        for _sid,_subgraph in enumerate(sshifted):
+            if _sid in extended_dict:
+                continue
+
+            # fetch segment properties
+            rpts  = np.vstack([edge[2]['seg'] for edge in _subgraph.edges(data=True)])
+            r0list[_sid] = np.mean(rpts, axis=0) 
+            rpts = rpts - r0list[_sid] 
+     
+            # fetch best initial guess then do minimisation from there
+            ix = np.argmin([minfunc(p0, rpts) for p0 in pinit])
+            res = scipy.optimize.minimize(minfunc, pinit[ix], rpts, method="Nelder-Mead")
+
+            nhatlist[_sid]  = nhat(*res.x)
+            devlist[_sid] = minfunc(res.x, rpts) 
+
+        # export relaxation volume tensors and mean area vectors for closed loops
+        fending = fpath.split('.')[-1]
+        fname = fpath.rstrip('.'+fending)
+        afile = "%s.areas" % fname
+        print ("Exporting mean habit plane vectors and relaxation volume tensors for closed loops to file %s" % afile)
+
+        wfile = open(afile, 'w')
+        wfile.write("#  id  r0x r0y r0z nx ny nz sigma_d Omega_11 Omega_22 Omega_33 Omega_12 Omega_13 Omega_23\n")
+        for _sid,_subgraph in enumerate(sshifted):
+            if _sid in extended_dict:
+                continue
+            _Am = nhatlist[_sid]
+            _Oij = volumetensors[_sid]
+            wlist = tuple(np.r_[_sid, r0list[_sid], _Am, devlist[_sid], [_Oij[0,0], _Oij[1,1], _Oij[2,2], _Oij[0,1], _Oij[0,2], _Oij[1,2]]])
+            wfile.write("%6d %9.3f %9.3f %9.3f %7.3f %7.3f %7.3f %7.3f %11.3e %11.3e %11.3e %11.3e %11.3e %11.3e\n" % wlist) 
+        wfile.close()
+
+
+    if SIZES:
+        # compute and export maximum loop diameter 
+        print ("Computing loop diameters.")
+
+        diamlist = {}
+        r0list = {}
+        for _sid,_subgraph in enumerate(sshifted):
+            if _sid in extended_dict: # skip extended loops
+                continue
+
+            # fetch segment properties
+            rpts  = np.vstack([edge[2]['seg'] for edge in _subgraph.edges(data=True)])
+            r0list[_sid] = np.mean(rpts, axis=0) 
+            
+            # compute maximum distance between any pair of segments
+            dmax = 0
+            for _r in rpts:
+                dmax = max(dmax, np.max(np.linalg.norm(_r-rpts, axis=1)))
+ 
+            diamlist[_sid] = dmax 
+
+        # export loop diameters
+        fending = fpath.split('.')[-1]
+        fname = fpath.rstrip('.'+fending)
+        afile = "%s.diams" % fname
+        print ("Exporting loop diameters for closed loops to file %s" % afile)
+
+        wfile = open(afile, 'w')
+        wfile.write("#  id  r0x r0y r0z diameter\n")
+        for _sid,_subgraph in enumerate(sshifted):
+            if _sid in extended_dict:
+                continue
+            wlist = tuple(np.r_[_sid, r0list[_sid], diamlist[_sid]])
+            wfile.write("%6d %9.3f %9.3f %9.3f %9.3f\n" % wlist) 
+        wfile.close()
+
+    if SCHMID:
+        # normalise schmid directions
+        sdirs = [_sd/np.linalg.norm(_sd) for _sd in SCHMIDDIRECTIONS]
+        slist = np.zeros(len(sdirs))
+        llist = np.zeros(len(sdirs))
+
+        for _sid,_subgraph in enumerate(sshifted):
+            for edge in _subgraph.edges(data=True):
+
+                # fetch segment properties
+                bvec = edge[2]['burgers']
+                rpts  = edge[2]['seg']
+
+                # tangent vectors and lengths (for weighting)
+                tvecs = [rpts[_j+1]-rpts[_j] for _j in range(len(rpts)-1)]
+                tlens = np.linalg.norm(tvecs, axis=1)
+
+                # get slip plane normal vevtors nhats
+                thats = [tv/np.sqrt(tv@tv) for tv in tvecs] 
+                bhat = bvec/np.sqrt(bvec@bvec)
+                nhats = [np.cross(bhat, tvecs[j]) for j in range(len(tvecs))]
+                nhats = [nh/np.sqrt(nh@nh) for nh in nhats] 
+
+                # f-schmid
+                fhat = np.array([0,0,1])
+                for si,sdir in enumerate(sdirs): 
+                    for j in range(len(rpts)-1):
+                        if tlens[j]<50.0:
+                            np.abs(fhat@nhats[j])*np.abs(fhat@sdir)*tlens[j] 
+
+                    slist[si] += np.sum([np.abs(fhat@nhats[j])*np.abs(fhat@sdir)*tlens[j] for j in range(len(rpts)-1) if tlens[j]<50.0])
+                    llist[si] += np.sum([tl for tl in tlens if tl<50.0])
+
+        # re-weight
+        #for si,sdir in enumerate(sdirs):
+        #    slist[si] *= 1/llist[si]
+
+        # export schmid factors
+        fending = fpath.split('.')[-1]
+        fname = fpath.rstrip('.'+fending)
+        afile = "%s.schmid" % fname
+        print ("Exporting mean Schmid factors to file %s" % afile)
+
+        wfile = open(afile, 'w')
+        wfile.write("dx dy dz m*len len\n")
+        for si,sdir in enumerate(sdirs):
+            wlist = tuple(np.r_[sdir, slist[si], llist[si]])
+            wfile.write("%9.3f %9.3f %9.3f %7.3f %7.3f\n" % wlist) 
+        wfile.close()
 
     # walk through the segments of extended graphs and determine where they are disconnected
     boundary_points = {_k:[] for _k in range(3)} 
@@ -262,21 +411,21 @@ def main():
 
         return 0
 
+    if not BRANCHES:
+        extended = False
+
     # compute periodic correction relaxation volume tensor
     if extended:
         correction_branches = {}
  
         # loop over all boundary points and compute relaxation volume correction 
-        print ("Computing periodic closure correction to the relaxation volume.")
-
-        # first close networks extended along _pi:=x, then y, then z 
         _omegaij = np.zeros((3,3))
         for _pi in boundary_points.keys():
             correction_branches[_pi] = []
 
-            print ("boundary point:", _pi, boundary_points[_pi])
             bdpts = boundary_points[_pi]  
             bvecs = boundary_bvecs[_pi]
+            print ("boundary point:", _pi, bdpts, bvecs) 
 
             # all extended network points lying on the boundary close into the first extended point 
             for _i in range(1, len(bdpts)):
@@ -292,47 +441,22 @@ def main():
                 _outer = -.5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_pi], _dist_i0)) 
                 _omegaij += .5*(_outer + _outer.T) 
 
-                # add a PBC correction branch
-                for _pj in range(3):
-                    for _pk in range(3):
-                        # do not consider closure along extended network direction
-                        if _pi == _pj or _pi == _pk or _pj == _pk:
-                            continue
-                       
-                        #if _frac_i0[_pi] < 0.0:
-                        #    correction_branches[_pi] += [+.5*np.dot(bvecs[_i], np.cross(rfile.cmat[:,_pi], rfile.cmat[:,_j]))]
-                        #else:
-                        #    correction_branches[_pi] += [-.5*np.dot(bvecs[_i], np.cross(rfile.cmat[:,_pi], rfile.cmat[:,_j]))]
+ 
+        # now loop over all burgers vectors and compute periodic closure branches 
+        print ("Computing periodic closure correction to the relaxation volume.")
+        correction_branches = {}
 
-                        # loop over all possible closure combinations
-                        for _img_j in [-1,0,1]:
-                            for _img_k in [-1,0,1]:
-                                correction_tensor = .5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))
-                                correction_tensor = .5*(correction_tensor + correction_tensor.T)
-                                correction_branches[_pi] += [correction_tensor]
+        # first close networks extended along _pi:=x, then y, then z 
+        for _pi in boundary_points.keys():
+            correction_branches[_pi] = []
 
-                                #correction_branches[_pi] += [+.5*np.dot(bvecs[_pi], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))]
-                                #correction_branches[_pi] += [-.5*np.dot(bvecs[_pi], np.cross(rfile.cmat[:,_pi], rfile.cmat[:,_pj]))]
+            bdpts = boundary_points[_pi]  
+            bvecs = boundary_bvecs[_pi]
+            print ("boundary point:", _pi, bdpts, bvecs) 
 
-                                #print ("dim=%d, b=(%6.3f,%6.3f,%6.3f) closure along cj,ck=(%2d,%2d) branch: %14.7f" % \
-                                #            (_pi, bvecs[_i][0], bvecs[_i][1], bvecs[_i][2], _img_j, _img_k, np.trace(correction_branches[_pi][-1])*alattice/omega0))
-                        #print ("corrections: ±", correction_branches[_pi][0]*alattice/omega0)
+            for _i in range(len(bdpts)):
 
-        '''
-        # construct periodic closure branches 
-        if extended:
-            correction_branches = {}
-     
-            # first close networks extended along _pi:=x, then y, then z 
-            for _pi in boundary_points.keys():
-                correction_branches[_pi] = []
-
-                # only consider the unique burgers vectors along this dimension
-                bvecs = boundary_bvecs[_pi]
-
-                # all extended network points lying on the boundary close into the first extended point 
-                for _i in range(1, len(bdpts)):
-
+                for _si in [-1,1]:
                     # add a PBC correction branch
                     for _pj in range(3):
                         for _pk in range(3):
@@ -341,33 +465,22 @@ def main():
                                 continue
 
                             # loop over all possible closure combinations
-                            for _img_j in [-1,0,1]:
-                                for _img_k in [-1,0,1]:
-                                    correction_tensor = .5*np.outer(bvecs[_i], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))
+                            for _img_j in [-2,-1,0,1,2]:
+                                for _img_k in [-2,-1,0,1,2]:
+                                    if _img_j == _img_k == 0:
+                                        continue
+
+                                    correction_tensor = .5*np.outer(_si*bvecs[_i], np.cross(rfile.cmat[:,_pi], _img_j*rfile.cmat[:,_pj] + _img_k*rfile.cmat[:,_pk]))
                                     correction_tensor = .5*(correction_tensor + correction_tensor.T)
                                     correction_branches[_pi] += [correction_tensor]
-        '''
-        
+
+                                    print ("bvec: %6.2f,%6.2f,%6.2f, pi,pj,pk: %2d,%2d,%2d. img_j,img_k: %2d,%2d" % (bvecs[_i][0], bvecs[_i][1], bvecs[_i][2], _pi, _pj, _pk, _img_j, _img_k))
+                                    print (correction_tensor*alattice/omega0)
+                                    print ()
+         
 
         _omega = np.trace(_omegaij)
         pbcvolume, pbcvolumetensor = alattice*_omega/omega0, alattice*_omegaij/omega0
-
-        '''
-        print ("Relaxation volume correction: %14.8f atomic volumes\n" % pbcvolume)
-        print ('Periodic relaxation volume tensor correction in atomic volumes: ') 
-        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0]))
-        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1]))
-        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2]))
-        print ()
-
-        print ("PBC-corrected relaxation volume: %14.8f atomic volumes\n" % (omegatot+pbcvolume))
-
-        print ('PBC-corrected relaxation volume tensor in atomic volumes: ') 
-        print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[0]+pbcvolumetensor[0]))
-        print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[1]+pbcvolumetensor[1]))
-        print ("%12.4f %12.4f %12.4f" % tuple(volumetensor[2]+pbcvolumetensor[2]))
-        print ()
-        '''
 
         # only retain unique branches
         for _pi in correction_branches.keys():
@@ -393,7 +506,7 @@ def main():
             print (pbcvolume + alattice*np.trace(_corr)/omega0)
         print ()
 
-            # report on correction branches
+        # report on correction branches
         print ()
         print ("Suggested correction branches for PBC-corrected relaxation volume tensor (atomic volumes):") 
         print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0]))
@@ -406,38 +519,6 @@ def main():
             print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2] + alattice*_corr[2]/omega0))
             print ()
         print ()
-
-        '''
-        # report on correction branches
-        print ()
-        print ("Suggested correction branches for PBC-corrected relaxation volume (atomic volumes):") 
-        print (pbcvolume)
-        for _pi in correction_branches.keys():
-            if correction_branches[_pi] is []:
-                continue
-
-            for _corr in correction_branches[_pi]:
-                print (pbcvolume + alattice*np.trace(_corr)/omega0)
-        print ()
-
-        # report on correction branches
-        print ()
-        print ("Suggested correction branches for PBC-corrected relaxation volume tensor (atomic volumes):") 
-        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0]))
-        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1]))
-        print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2]))
-        print ()
-        for _pi in correction_branches.keys():
-            if correction_branches[_pi] is []:
-                continue
-
-            for _corr in correction_branches[_pi]:
-                print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[0] + alattice*_corr[0]/omega0))
-                print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[1] + alattice*_corr[1]/omega0))
-                print ("%12.4f %12.4f %12.4f" % tuple(pbcvolumetensor[2] + alattice*_corr[2]/omega0))
-                print ()
-        print ()
-        '''
 
     # determine real loop linesense 
     # import the complete atomic dump file
