@@ -3,6 +3,7 @@ import time
 from scipy import spatial
 
 from tqdm import tqdm
+import ovito
 
 class ReadFile:
     def __init__(self, fpath):
@@ -215,5 +216,49 @@ class ReadDump:
         res = self.ktree.count_neighbors(*args, **kwargs)
  
 
+class ReadCA:
+    ## TODO: 
+    # Note that this function has only been tested for orthogonal lattices, 
+    # to be tested on triclinic lattices.
 
+    def __init__(self, fpath):
+        self.fpath = fpath
+
+    def load(self):
+        fname = self.fpath
+        t0 = time.time()
+
+        pipeline = ovito.io.import_file(fname)
+        data = pipeline.compute()
+        disloc_lines = data.dislocations.lines
+        list_lines=[]
+        for l in disloc_lines:
+            list_lines.append(l.points)
+        self.xyz = list_lines
+
+        this_cell = data.cell
+        cell_matrix = this_cell.matrix
+
+        # cell matrix and its inverse
+        self.cmat = cell_matrix[:,:3]
+        self.cmati = this_cell.inverse[:,:3]
+
+        # cell origin
+        self.r0 = cell_matrix[:,3:].T[0]
+
+        # construct cell vectors
+        self.c1 = cell_matrix[:,:1].T[0]
+        self.c2 = cell_matrix[:,1:2].T[0]
+        self.c3 = cell_matrix[:,2:3].T[0]
+
+        self.natoms = len(self.xyz)
+        self.celldim = np.shape(cell_matrix[:,:-1])
+ 
+        segments = data.dislocations.segments
+        self.btrue = np.r_[[d.true_burgers_vector for d in segments]]
+        self.bspatial = np.r_[[d.spatial_burgers_vector for d in segments]]
+        #self.isloop   = np.r_[[d.isloop for d in segments]]
+        #self.id = np.unique(self.id)
+
+        return 0
 
